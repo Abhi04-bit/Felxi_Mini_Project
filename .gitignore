@@ -48,6 +48,9 @@ __pycache__/
 .env.local
 .env.*
 
+# Virtual environment
+.venv/
+
 # Misc
 *.sqlite3
 *.sqlite
