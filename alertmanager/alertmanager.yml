@@ -1,0 +1,14 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: default
+  group_by: [alertname]
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 4h
+
+# This receiver intentionally has no integrations. Alerts still appear in the
+# Alertmanager UI; configure ALERTMANAGER_WEBHOOK_URL to enable webhook delivery.
+receivers:
+  - name: default

@@ -1,0 +1,5 @@
+- targets:
+    # Replace this public demonstration URL with an HTTPS endpoint you are authorized to monitor.
+    - https://example.com
+  labels:
+    target_name: public-demo

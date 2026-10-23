@@ -1,0 +1,137 @@
+services:
+  exporter:
+    build:
+      context: ./exporter
+    command: ["python", "exporter.py", "--host", "0.0.0.0", "--port", "9108"]
+    ports:
+      - "127.0.0.1:9108:9108"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9108/healthz', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ -n "$${ALERTMANAGER_WEBHOOK_URL:-}" ]; then
+          escaped_url=$$(printf '%s' "$${ALERTMANAGER_WEBHOOK_URL}" | sed 's/[\\&|]/\\&/g')
+          sed "s|__ALERTMANAGER_WEBHOOK_URL__|$${escaped_url}|g" /etc/alertmanager/webhook-template.yml > /tmp/alertmanager.yml
+        else
+          cp /etc/alertmanager/alertmanager.yml /tmp/alertmanager.yml
+        fi
+        exec /bin/alertmanager --config.file=/tmp/alertmanager.yml --storage.path=/alertmanager --web.listen-address=:9093
+    environment:
+      ALERTMANAGER_WEBHOOK_URL: ${ALERTMANAGER_WEBHOOK_URL:-}
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./alertmanager/webhook-template.yml:/etc/alertmanager/webhook-template.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9093/-/healthy >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  blackbox-exporter:
+    image: quay.io/prometheus/blackbox-exporter:v0.28.0
+    command:
+      - --config.file=/etc/blackbox_exporter/blackbox.yml
+      - --web.listen-address=:9115
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox_exporter/blackbox.yml:ro
+    ports:
+      - "127.0.0.1:9115:9115"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9115/-/healthy >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  prometheus:
+    image: prom/prometheus:v3.13.3
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        case "$${SSH_FAILURE_THRESHOLD}" in ''|*[!0-9]*) echo 'SSH_FAILURE_THRESHOLD must be a positive integer' >&2; exit 2 ;; esac
+        if [ "$${SSH_FAILURE_THRESHOLD}" -lt 1 ]; then echo 'SSH_FAILURE_THRESHOLD must be at least 1' >&2; exit 2; fi
+        printf '%s\n' "$${SSH_FAILURE_WINDOW}" | grep -Eq '^[1-9][0-9]*(ms|s|m|h|d|w|y)$$' || { echo 'SSH_FAILURE_WINDOW must be a positive Prometheus duration such as 5m' >&2; exit 2; }
+        case "$${TLS_CERT_WARNING_DAYS}" in ''|*[!0-9]*) echo 'TLS_CERT_WARNING_DAYS must be a positive integer' >&2; exit 2 ;; esac
+        case "$${TLS_CERT_CRITICAL_DAYS}" in ''|*[!0-9]*) echo 'TLS_CERT_CRITICAL_DAYS must be a positive integer' >&2; exit 2 ;; esac
+        if [ "$${TLS_CERT_WARNING_DAYS}" -lt 1 ] || [ "$${TLS_CERT_CRITICAL_DAYS}" -lt 1 ] || [ "$${TLS_CERT_CRITICAL_DAYS}" -ge "$${TLS_CERT_WARNING_DAYS}" ]; then echo 'TLS_CERT_CRITICAL_DAYS must be positive and less than TLS_CERT_WARNING_DAYS' >&2; exit 2; fi
+        printf '%s\n' "$${HTTPS_PROBE_FAILURE_FOR}" | grep -Eq '^[1-9][0-9]*(ms|s|m|h|d|w|y)$$' || { echo 'HTTPS_PROBE_FAILURE_FOR must be a positive Prometheus duration such as 2m' >&2; exit 2; }
+        tls_warning_seconds=$$((TLS_CERT_WARNING_DAYS * 86400))
+        tls_critical_seconds=$$((TLS_CERT_CRITICAL_DAYS * 86400))
+        sed -e "s|__SSH_FAILURE_THRESHOLD__|$${SSH_FAILURE_THRESHOLD}|g" -e "s|__SSH_FAILURE_WINDOW__|$${SSH_FAILURE_WINDOW}|g" -e "s|__TLS_CERT_WARNING_SECONDS__|$${tls_warning_seconds}|g" -e "s|__TLS_CERT_CRITICAL_SECONDS__|$${tls_critical_seconds}|g" -e "s|__TLS_CERT_WARNING_DAYS__|$${TLS_CERT_WARNING_DAYS}|g" -e "s|__TLS_CERT_CRITICAL_DAYS__|$${TLS_CERT_CRITICAL_DAYS}|g" -e "s|__HTTPS_PROBE_FAILURE_FOR__|$${HTTPS_PROBE_FAILURE_FOR}|g" /etc/prometheus/alerts.yml.template > /tmp/alerts.yml
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=15d --web.enable-lifecycle --web.listen-address=:9090
+    environment:
+      SSH_FAILURE_THRESHOLD: ${SSH_FAILURE_THRESHOLD:-5}
+      SSH_FAILURE_WINDOW: ${SSH_FAILURE_WINDOW:-5m}
+      TLS_CERT_WARNING_DAYS: ${TLS_CERT_WARNING_DAYS:-14}
+      TLS_CERT_CRITICAL_DAYS: ${TLS_CERT_CRITICAL_DAYS:-7}
+      HTTPS_PROBE_FAILURE_FOR: ${HTTPS_PROBE_FAILURE_FOR:-2m}
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml.template:/etc/prometheus/alerts.yml.template:ro
+      - ./prometheus/tls-alerts.test.yml:/etc/prometheus/tls-alerts.test.yml:ro
+      - ./blackbox/targets.yml:/etc/prometheus/blackbox-targets.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      exporter:
+        condition: service_healthy
+      alertmanager:
+        condition: service_healthy
+      blackbox-exporter:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9090/-/healthy >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  grafana:
+    image: grafana/grafana:13.2.4
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in your local .env file}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/datasources/prometheus.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  alertmanager_data:
+  grafana_data:
+  prometheus_data:

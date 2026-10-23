@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/alerttoastregion.tsx","./src/components/desktopnotificationsettings.tsx","./src/lib/alerttransitions.d.ts","./src/lib/desktopnotifications.d.ts","./src/lib/prometheus.ts","./src/lib/score.ts"],"version":"5.9.3"}

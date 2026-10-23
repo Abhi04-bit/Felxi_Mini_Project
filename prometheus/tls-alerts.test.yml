@@ -1,0 +1,96 @@
+rule_files:
+  - /tmp/alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-https",instance="critical.example",target_name="critical"}'
+        values: '1+0x3'
+      - series: 'probe_ssl_earliest_cert_expiry{job="blackbox-https",instance="critical.example",target_name="critical"}'
+        values: '518400+0x3'
+      - series: 'probe_success{job="blackbox-https",instance="warning.example",target_name="warning"}'
+        values: '1+0x3'
+      - series: 'probe_ssl_earliest_cert_expiry{job="blackbox-https",instance="warning.example",target_name="warning"}'
+        values: '864000+0x3'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: TLSCertificateExpiryCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: blackbox-https
+              instance: critical.example
+              target_name: critical
+            exp_annotations:
+              summary: HTTPS certificate expires within the critical window
+              description: The verified certificate for critical.example expires within 604800 seconds (7 days).
+      - eval_time: 1m
+        alertname: TLSCertificateExpiryWarning
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: blackbox-https
+              instance: warning.example
+              target_name: warning
+            exp_annotations:
+              summary: HTTPS certificate expires within the warning window
+              description: The verified certificate for warning.example expires within 1209600 seconds (14 days) and outside the critical window.
+      - eval_time: 1m
+        alertname: HttpsProbeUnavailable
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'probe_success{job="blackbox-https",instance="failed.example",target_name="failed"}'
+        values: '0+0x3'
+      - series: 'probe_ssl_earliest_cert_expiry{job="blackbox-https",instance="failed.example",target_name="failed"}'
+        values: '518400+0x3'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TLSCertificateExpiryCritical
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: TLSCertificateExpiryWarning
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: HttpsProbeUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: blackbox-https
+              instance: failed.example
+              target_name: failed
+            exp_annotations:
+              summary: HTTPS target probe failed
+              description: The HTTPS probe for failed.example is failing or its probe scrape is unavailable. Certificate expiry alerts require a successful probe.
+
+  - interval: 1m
+    input_series:
+      - series: 'up{job="blackbox-https",instance="scrape-failed.example",target_name="scrape-failed"}'
+        values: '0+0x3'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: HttpsProbeUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: blackbox-https
+              instance: scrape-failed.example
+              target_name: scrape-failed
+            exp_annotations:
+              summary: HTTPS target probe failed
+              description: The HTTPS probe for scrape-failed.example is failing or its probe scrape is unavailable. Certificate expiry alerts require a successful probe.
+
+  - interval: 1m
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: BlackboxProbeTargetsMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: blackbox-https
+            exp_annotations:
+              summary: No HTTPS probe targets are being scraped
+              description: No blackbox-https target series is present. Check blackbox/targets.yml and Prometheus target discovery.

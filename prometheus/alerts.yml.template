@@ -1,0 +1,60 @@
+groups:
+  - name: sentinelpulse-security
+    rules:
+      - alert: FailedSSHLoginBurst
+        expr: sum(increase(failed_ssh_logins_total[__SSH_FAILURE_WINDOW__])) >= __SSH_FAILURE_THRESHOLD__
+        labels:
+          severity: warning
+        annotations:
+          summary: SSH failed login burst detected
+          description: "At least __SSH_FAILURE_THRESHOLD__ failed SSH login events occurred during the last __SSH_FAILURE_WINDOW__."
+
+      - alert: ExporterUnavailable
+        expr: up{job="sentinelpulse-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: SentinelPulse exporter is unavailable
+          description: Prometheus has been unable to scrape the SentinelPulse exporter for at least one minute.
+
+      - alert: TLSCertificateExpiryCritical
+        expr: |
+          (probe_ssl_earliest_cert_expiry{job="blackbox-https"} - time() < __TLS_CERT_CRITICAL_SECONDS__)
+          and on(instance) (probe_success{job="blackbox-https"} == 1)
+        labels:
+          severity: critical
+        annotations:
+          summary: HTTPS certificate expires within the critical window
+          description: "The verified certificate for {{ $labels.instance }} expires within __TLS_CERT_CRITICAL_SECONDS__ seconds (__TLS_CERT_CRITICAL_DAYS__ days)."
+
+      - alert: TLSCertificateExpiryWarning
+        expr: |
+          (probe_ssl_earliest_cert_expiry{job="blackbox-https"} - time() < __TLS_CERT_WARNING_SECONDS__)
+          and on(instance) (probe_ssl_earliest_cert_expiry{job="blackbox-https"} - time() >= __TLS_CERT_CRITICAL_SECONDS__)
+          and on(instance) (probe_success{job="blackbox-https"} == 1)
+        labels:
+          severity: warning
+        annotations:
+          summary: HTTPS certificate expires within the warning window
+          description: "The verified certificate for {{ $labels.instance }} expires within __TLS_CERT_WARNING_SECONDS__ seconds (__TLS_CERT_WARNING_DAYS__ days) and outside the critical window."
+
+      - alert: HttpsProbeUnavailable
+        expr: |
+          (up{job="blackbox-https"} == 0)
+          or on(instance) (probe_success{job="blackbox-https"} == 0)
+        for: __HTTPS_PROBE_FAILURE_FOR__
+        labels:
+          severity: warning
+        annotations:
+          summary: HTTPS target probe failed
+          description: "The HTTPS probe for {{ $labels.instance }} is failing or its probe scrape is unavailable. Certificate expiry alerts require a successful probe."
+
+      - alert: BlackboxProbeTargetsMissing
+        expr: absent(up{job="blackbox-https"})
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: No HTTPS probe targets are being scraped
+          description: No blackbox-https target series is present. Check blackbox/targets.yml and Prometheus target discovery.
